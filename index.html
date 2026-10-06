@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YouTube Remote Player</title>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+:root{--bg:#0f1115;--card:#1a1d24;--line:#2a2e38;--text:#e8eaf0;--muted:#9aa0ad;--acc:#ff3b5c;--acc2:#3b82f6}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:'Sarabun',sans-serif}
+button,input{font-family:inherit;font-size:15px}
+input{width:100%;padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:#11141a;color:var(--text)}
+button{padding:10px 14px;border:0;border-radius:10px;background:var(--line);color:var(--text);cursor:pointer;font-weight:600}
+button.acc{background:var(--acc)}button.blue{background:var(--acc2)}button:active{transform:scale(.97)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.row{display:flex;gap:8px;align-items:center}.muted{color:var(--muted);font-size:13px}
+.list{display:flex;flex-direction:column;gap:8px;overflow:auto}
+.item{display:flex;gap:10px;align-items:center;padding:6px;border-radius:10px;background:#141720}
+.item img{width:96px;height:54px;object-fit:cover;border-radius:6px;flex-shrink:0}
+.item .t{flex:1;font-size:14px;line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.item button{padding:7px 10px;font-size:13px}
+.now{border:1px solid var(--acc)}
+h2{margin:0 0 10px;font-size:17px}
+/* host */
+#host{display:grid;grid-template-columns:1fr 360px;gap:14px;padding:14px;height:100vh}
+#left{display:flex;flex-direction:column;gap:14px;min-height:0}
+#playerWrap{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:14px;overflow:hidden}
+#playerWrap iframe,#player{position:absolute;inset:0;width:100%;height:100%}
+#right{display:flex;flex-direction:column;gap:14px;min-height:0}
+#results,#queue{flex:1;min-height:0}
+#qrBox{background:#fff;padding:8px;border-radius:10px;width:fit-content}
+@media(max-width:900px){#host{grid-template-columns:1fr;height:auto}}
+/* remote */
+#remote{max-width:560px;margin:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+.ctrl{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.ctrl button{padding:16px 0;font-size:18px}
+.hide{display:none!important}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#000c;padding:10px 18px;border-radius:20px;opacity:0;transition:.3s;pointer-events:none}
+</style>
+</head>
+<body>
+
+<!-- ================= HOST (จอหลัก) ================= -->
+<div id="host" class="hide">
+  <div id="left">
+    <div id="playerWrap"><div id="player"></div></div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between;flex-wrap:wrap">
+        <div id="nowTitle" style="font-weight:700">ยังไม่มีเพลงที่กำลังเล่น</div>
+        <div class="row">
+          <button onclick="H.toggle()">⏯ เล่น/หยุด</button>
+          <button class="acc" onclick="H.next()">⏭ ข้ามเพลง</button>
+          <button onclick="H.seekSkip()">⏩ +10 วิ</button>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:240px">
+      <form class="row" onsubmit="event.preventDefault();H.search(qIn.value)">
+        <input id="qIn" placeholder="ค้นหาเพลงใน YouTube...">
+        <button class="blue">ค้นหา</button>
+      </form>
+      <div id="results" class="list" style="margin-top:10px"></div>
+    </div>
+  </div>
+  <div id="right">
+    <div class="card">
+      <h2>📱 สแกนเป็นรีโมท</h2>
+      <div class="row" style="align-items:flex-start;gap:12px">
+        <div id="qrBox"></div>
+        <div class="muted" style="flex:1">
+          <div id="peerStatus">กำลังเชื่อมต่อ...</div>
+          <div id="remoteCount" style="margin-top:6px">รีโมทที่เชื่อมต่อ: 0</div>
+          <a id="remoteLink" target="_blank" style="color:var(--acc2);word-break:break-all;font-size:12px"></a>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:200px">
+      <h2>🎵 คิวเพลง <span id="qCount" class="muted"></span></h2>
+      <div id="queue" class="list"></div>
+    </div>
+    <div class="card">
+      <div class="muted" style="margin-bottom:6px">YouTube Data API Key</div>
+      <div class="row"><input id="keyIn" type="password" placeholder="AIza..."><button onclick="H.saveKey()">บันทึก</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= REMOTE (มือถือ) ================= -->
+<div id="remote" class="hide">
+  <div class="card">
+    <div class="muted" id="rStatus">กำลังเชื่อมต่อจอหลัก...</div>
+    <div id="rNow" style="font-weight:700;margin-top:4px">-</div>
+  </div>
+  <div class="ctrl">
+    <button onclick="R.send({t:'toggle'})">⏯</button>
+    <button class="acc" onclick="R.send({t:'next'})">⏭</button>
+    <button onclick="R.send({t:'vol',d:-10})">🔉</button>
+    <button onclick="R.send({t:'vol',d:10})">🔊</button>
+  </div>
+  <form class="row" onsubmit="event.preventDefault();R.send({t:'search',q:rq.value})">
+    <input id="rq" placeholder="ค้นหาเพลง..."><button class="blue">ค้นหา</button>
+  </form>
+  <div id="rResults" class="list"></div>
+  <h2 style="margin-top:6px">🎵 คิวเพลง</h2>
+  <div id="rQueue" class="list"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const decode=s=>{const t=document.createElement('textarea');t.innerHTML=s;return t.value};
+function toast(m){const t=$('toast');t.textContent=m;t.style.opacity=1;clearTimeout(t._h);t._h=setTimeout(()=>t.style.opacity=0,1800)}
+const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+const PEER_PREFIX='ytremote-';
+const params=new URLSearchParams(location.search);
+
+/* ===================== HOST ===================== */
+const H={
+  player:null,ready:false,queue:[],current:null,results:[],conns:[],
+  init(){
+    $('host').classList.remove('hide');
+    $('keyIn').value=store.get('yt_key')||'';
+    // โหลด YouTube IFrame API
+    const s=document.createElement('script');s.src='https://www.youtube.com/iframe_api';document.head.appendChild(s);
+    window.onYouTubeIframeAPIReady=()=>{
+      H.player=new YT.Player('player',{
+        playerVars:{autoplay:1,rel:0,modestbranding:1,playsinline:1},
+        events:{
+          onReady:()=>{H.ready=true;if(H.current)H.load(H.current)},
+          onStateChange:e=>{if(e.data===YT.PlayerState.ENDED)H.next()},
+          onError:()=>{toast('เพลงนี้เล่นในเว็บอื่นไม่ได้ ข้ามให้อัตโนมัติ');setTimeout(()=>H.next(),1200)}
+        }
+      });
+    };
+    H.initPeer();
+  },
+  initPeer(){
+    let id=store.get('peer_id');
+    if(!id){id=Math.random().toString(36).slice(2,8);store.set('peer_id',id)}
+    const peer=new Peer(PEER_PREFIX+id);
+    peer.on('open',()=>{
+      const url=location.origin+location.pathname+'?r='+id;
+      $('qrBox').innerHTML='';new QRCode($('qrBox'),{text:url,width:140,height:140});
+      $('remoteLink').href=url;$('remoteLink').textContent=url;
+      $('peerStatus').textContent='✅ พร้อมรับรีโมท (รหัส '+id+')';
+    });
+    peer.on('error',e=>{
+      if(e.type==='unavailable-id'){ // id ชน หรือเปิดซ้ำอีกแท็บ
+        $('peerStatus').textContent='⚠️ รหัสนี้ถูกใช้อยู่ (เปิดซ้ำอีกแท็บ?) กำลังสร้างรหัสใหม่';
+        store.set('peer_id','');peer.destroy();setTimeout(()=>H.initPeer(),500);
+      }else $('peerStatus').textContent='⚠️ '+e.type;
+    });
+    peer.on('disconnected',()=>setTimeout(()=>peer.reconnect(),2000));
+    peer.on('connection',c=>{
+      c.on('open',()=>{H.conns.push(c);H.updCount();c.send(H.state())});
+      c.on('data',d=>H.handle(d,c));
+      c.on('close',()=>{H.conns=H.conns.filter(x=>x!==c);H.updCount()});
+    });
+  },
+  updCount(){$('remoteCount').textContent='รีโมทที่เชื่อมต่อ: '+H.conns.length},
+  state(){return{t:'state',queue:H.queue,current:H.current}},
+  broadcast(){const s=H.state();H.conns.forEach(c=>{try{c.send(s)}catch(e){}});H.render()},
+  handle(d,c){
+    switch(d.t){
+      case 'search':H.apiSearch(d.q).then(r=>c.send({t:'results',items:r})).catch(e=>c.send({t:'err',m:e.message}));break;
+      case 'add':H.add(d.v);break;
+      case 'playnow':H.playNow(d.v);break;
+      case 'next':H.next();break;
+      case 'toggle':H.toggle();break;
+      case 'remove':H.remove(d.i);break;
+      case 'up':H.moveUp(d.i);break;
+      case 'vol':if(H.ready){const v=Math.max(0,Math.min(100,H.player.getVolume()+d.d));H.player.setVolume(v);c.send({t:'err',m:'ระดับเสียง '+v})}break;
+    }
+  },
+  saveKey(){store.set('yt_key',$('keyIn').value.trim());toast('บันทึก API Key แล้ว')},
+  async apiSearch(q){
+    const key=store.get('yt_key');
+    if(!key)throw new Error('ยังไม่ได้ใส่ YouTube API Key ที่จอหลัก');
+    if(!q.trim())return[];
+    const u='https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=20&q='+encodeURIComponent(q)+'&key='+key;
+    const r=await fetch(u);const j=await r.json();
+    if(j.error)throw new Error(j.error.message);
+    return j.items.map(i=>({id:i.id.videoId,title:decode(i.snippet.title),ch:decode(i.snippet.channelTitle),thumb:i.snippet.thumbnails.medium.url}));
+  },
+  async search(q){
+    try{H.results=await H.apiSearch(q);H.renderResults()}catch(e){toast(e.message)}
+  },
+  add(v){H.queue.push(v);toast('เพิ่มเข้าคิว: '+v.title);if(!H.current)H.next();else H.broadcast()},
+  playNow(v){H.current=v;H.load(v);H.broadcast()},
+  load(v){if(H.ready)H.player.loadVideoById(v.id);$('nowTitle').textContent='▶ '+v.title},
+  next(){
+    const v=H.queue.shift();
+    if(v){H.current=v;H.load(v)}else{H.current=null;if(H.ready)H.player.stopVideo();$('nowTitle').textContent='คิวว่าง — เลือกเพลงได้เลย'}
+    H.broadcast();
+  },
+  toggle(){if(!H.ready)return;H.player.getPlayerState()===YT.PlayerState.PLAYING?H.player.pauseVideo():H.player.playVideo()},
+  seekSkip(){if(H.ready)H.player.seekTo(H.player.getCurrentTime()+10,true)},
+  remove(i){H.queue.splice(i,1);H.broadcast()},
+  moveUp(i){if(i>0){[H.queue[i-1],H.queue[i]]=[H.queue[i],H.queue[i-1]];H.broadcast()}},
+  renderResults(){
+    $('results').innerHTML=H.results.map((v,i)=>`<div class="item"><img src="${v.thumb}"><div class="t">${esc(v.title)}<div class="muted">${esc(v.ch)}</div></div>
+      <button class="blue" onclick="H.add(H.results[${i}])">+ คิว</button><button onclick="H.playNow(H.results[${i}])">▶</button></div>`).join('')||'<div class="muted">ไม่พบผลลัพธ์</div>';
+  },
+  render(){
+    $('qCount').textContent='('+H.queue.length+')';
+    $('queue').innerHTML=(H.current?`<div class="item now"><img src="${H.current.thumb}"><div class="t">▶ ${esc(H.current.title)}</div></div>`:'')+
+      H.queue.map((v,i)=>`<div class="item"><img src="${v.thumb}"><div class="t">${i+1}. ${esc(v.title)}</div>
+      <button onclick="H.moveUp(${i})">↑</button><button onclick="H.remove(${i})">✕</button></div>`).join('');
+  }
+};
+
+/* ===================== REMOTE ===================== */
+const R={
+  conn:null,results:[],
+  init(id){
+    $('remote').classList.remove('hide');
+    const peer=new Peer();
+    const connect=()=>{
+      R.conn=peer.connect(PEER_PREFIX+id,{reliable:true});
+      R.conn.on('open',()=>$('rStatus').textContent='✅ เชื่อมต่อจอหลักแล้ว');
+      R.conn.on('data',R.handle);
+      R.conn.on('close',()=>{$('rStatus').textContent='⚠️ หลุดการเชื่อมต่อ กำลังเชื่อมใหม่...';setTimeout(connect,2000)});
+    };
+    peer.on('open',connect);
+    peer.on('error',e=>{$('rStatus').textContent='⚠️ เชื่อมต่อไม่ได้ ('+e.type+') ตรวจว่าจอหลักเปิดอยู่';if(e.type==='peer-unavailable')setTimeout(connect,3000)});
+  },
+  send(m){if(R.conn&&R.conn.open)R.conn.send(m);else toast('ยังไม่ได้เชื่อมต่อ')},
+  handle(d){
+    if(d.t==='state'){
+      $('rNow').textContent=d.current?'▶ '+d.current.title:'คิวว่าง';
+      $('rQueue').innerHTML=d.queue.map((v,i)=>`<div class="item"><img src="${v.thumb}"><div class="t">${i+1}. ${esc(v.title)}</div>
+        <button onclick="R.send({t:'up',i:${i}})">↑</button><button onclick="R.send({t:'remove',i:${i}})">✕</button></div>`).join('')||'<div class="muted">ยังไม่มีเพลงในคิว</div>';
+    }else if(d.t==='results'){
+      R.results=d.items;
+      $('rResults').innerHTML=d.items.map((v,i)=>`<div class="item"><img src="${v.thumb}"><div class="t">${esc(v.title)}<div class="muted">${esc(v.ch)}</div></div>
+        <button class="blue" onclick="R.add(${i})">+</button><button onclick="R.send({t:'playnow',v:R.results[${i}]})">▶</button></div>`).join('')||'<div class="muted">ไม่พบผลลัพธ์</div>';
+    }else if(d.t==='err')toast(d.m);
+  },
+  add(i){R.send({t:'add',v:R.results[i]});toast('เพิ่มเข้าคิวแล้ว')}
+};
+
+/* ===================== START ===================== */
+params.get('r')?R.init(params.get('r')):H.init();
+</script>
+</body>
